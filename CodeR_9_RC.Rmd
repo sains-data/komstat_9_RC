@@ -1,0 +1,395 @@
+```{r}
+# ======================================================
+# 1. LOAD LIBRARY & DATA
+# ======================================================
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(tidyr)
+
+data <- read_excel("C:/Users/muham/Downloads/Jumlah Kekerasan Terhadap Anak menurut Jenis Kekerasan yang Dialami-2023-SUMATERA SELATAN.xlsx")
+head(data)
+
+```
+
+```{r}
+# ======================================================
+# 9. STATISTIK
+# ======================================================
+
+library(readxl)
+library(dplyr)
+
+# Baca file Excel 
+df <- data
+
+# Ambil hanya kolom numerik
+numeric_df <- df %>% 
+  select(where(is.numeric)) %>% 
+  select(-No)   # kolom No dihapus
+
+# Summary tabel 
+summary_table <- data.frame(
+  Variable = colnames(numeric_df),
+  Mean = sapply(numeric_df, function(x) mean(x, na.rm = TRUE)),
+  Median = sapply(numeric_df, function(x) median(x, na.rm = TRUE)),
+  Mode = sapply(numeric_df, function(x) mode(x)),
+  Min = sapply(numeric_df, function(x) min(x, na.rm = TRUE)),
+  Max = sapply(numeric_df, function(x) max(x, na.rm = TRUE)),
+  SD = sapply(numeric_df, function(x) sd(x, na.rm = TRUE)),
+  Variance = sapply(numeric_df, function(x) var(x, na.rm = TRUE)),
+  IQR = sapply(numeric_df, function(x) IQR(x, na.rm = TRUE))
+)
+
+# Hasil
+summary_table
+```
+
+```{r}
+# ======================================================
+# 2. PALET WARNA
+# ======================================================
+blue_palette <- colorRampPalette(c("#E0F0FF", "#88B4E7", "#2F6FB0", "#08306B"))
+
+```
+
+```{r}
+# ======================================================
+# 3. S3 CLASS: VISUALISASI DATA AWAL
+# ======================================================
+
+visKekerasan <- function(data){
+  structure(
+    list(data_raw = data),
+    class = "visKekerasan"
+  )
+}
+
+plotVis <- function(obj) {
+  UseMethod("plotVis")
+}
+
+plotVis.visKekerasan <- function(obj){
+  
+  df <- obj$data_raw %>%
+    mutate(Total = Fisik + Psikis + Seksual + Eksploitasi + TPPO + Penelantaran + Lainnya)
+  
+  ggplot(df, aes(x = reorder(Cakupan, Total), y = Total)) +
+    geom_col(fill = "steelblue") +
+    coord_flip() +
+    labs(
+      title = "Total Kekerasan Anak per Kabupaten/Kota",
+      x = "Kabupaten/Kota",
+      y = "Jumlah"
+    ) +
+    theme_minimal()
+}
+
+```
+
+```{r}
+# ======================================================
+# 4. PIE CHART (BISA UNTUK S3 ATAU DATA FRAME)
+# ======================================================
+
+plotPie <- function(obj){
+  
+  df <- if (methods::is(obj, "clustKekerasan")) obj$data else obj
+  
+  totals <- df %>% 
+    summarise(
+      Fisik = sum(Fisik),
+      Psikis = sum(Psikis),
+      Seksual = sum(Seksual),
+      Eksploitasi = sum(Eksploitasi),
+      TPPO = sum(TPPO),
+      Penelantaran = sum(Penelantaran),
+      Lainnya = sum(Lainnya)
+    ) %>%
+    pivot_longer(everything(), names_to = "Jenis", values_to = "Jumlah") %>%
+    mutate(
+      Percent = round(Jumlah / sum(Jumlah) * 100, 1),
+      Label   = paste0(Percent, "%")
+    )
+  
+  ggplot(totals, aes(x = "", y = Jumlah, fill = Jenis)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar("y") +
+    geom_label(
+      aes(label = Label),
+      position = position_stack(vjust = 0.5),
+      show.legend = FALSE,
+      size = 4,
+      label.size = 0
+    ) +
+    labs(title = "Proporsi Jenis Kekerasan Anak (Sumsel 2023)") +
+    theme_void() +
+    theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+}
+
+```
+
+```{r}
+# ======================================================
+# 5. S3 CLASS: CLUSTERING K-MEANS
+# ======================================================
+
+clustKekerasan <- function(data, k = 3){
+  
+  num_data <- data %>%
+    select(Fisik, Psikis, Seksual, Eksploitasi, TPPO, Penelantaran, Lainnya)
+  
+  set.seed(123)
+  km <- kmeans(num_data, centers = k)
+  
+  data$Cluster <- km$cluster
+  
+  cluster_mean <- aggregate(num_data, list(Cluster = km$cluster), mean)
+  
+  # Label otomatis berdasarkan ranking
+  ranking <- order(rowSums(cluster_mean[ ,2:8]))
+  cluster_mean$Label <- ""
+  cluster_mean$Label[ranking[1]] <- "Kasus Rendah"
+  cluster_mean$Label[ranking[2]] <- "Kasus Sedang"
+  cluster_mean$Label[ranking[3]] <- "Kasus Tinggi"
+  
+  data$Cluster_Label <- cluster_mean$Label[data$Cluster]
+  
+  structure(
+    list(
+      data = data,
+      km = km,
+      cluster_mean = cluster_mean,
+      data_matrix = as.matrix(num_data) %>% `rownames<-`(data$Cakupan),
+      cluster = km$cluster
+    ),
+    class = "clustKekerasan"
+  )
+}
+```
+
+```{r}
+# ======================================================
+# 6. S3 METHOD: HEATMAP
+# ======================================================
+
+plotHeatmap <- function(obj){
+  UseMethod("plotHeatmap")
+}
+
+plotHeatmap.clustKekerasan <- function(obj){
+  heatmap(
+    obj$data_matrix,
+    scale = "none",
+    main = "Heatmap Kasus Kekerasan per Wilayah",
+    xlab = "",
+    ylab = "",
+    col = blue_palette(200)
+  )
+}
+```
+
+```{r}
+# ======================================================
+# 7. S3 METHOD: PCA
+# ======================================================
+
+plotPCA <- function(obj){
+  UseMethod("plotPCA")
+}
+
+plotPCA.clustKekerasan <- function(obj){
+  
+  pca <- prcomp(obj$data_matrix, scale. = TRUE)
+  
+  df <- data.frame(
+    PC1 = pca$x[,1],
+    PC2 = pca$x[,2],
+    Cluster = factor(obj$cluster),
+    Kabupaten = obj$data$Cakupan,
+    ID = 1:nrow(obj$data)
+  )
+  
+  plot(
+    df$PC1, df$PC2,
+    col = df$Cluster,
+    pch = 19,
+    xlab = "PC1",
+    ylab = "PC2",
+    main = "PCA Clustering Kekerasan Anak (Label Angka)"
+  )
+  
+  text(df$PC1, df$PC2, labels = df$ID, pos = 3, cex = 0.8)
+  
+  legend(
+    "topright",
+    legend = levels(df$Cluster),
+    col = 1:length(levels(df$Cluster)),
+    pch = 19,
+    title = "Cluster"
+  )
+  
+  cat("\n=========================\n")
+  cat("     DAFTAR LABEL PCA\n")
+  cat("=========================\n")
+  
+  for (i in 1:nrow(df)) {
+    cat(df$ID[i], " = ", df$Kabupaten[i], "\n")
+  }
+}
+```
+
+```{r}
+# ======================================================
+# 8. PEMANGGILAN
+# ======================================================
+
+# Visualisasi awal
+obj_vis <- visKekerasan(data)
+plotVis(obj_vis)
+
+# Pie chart
+plotPie(data)
+
+# Heatmap + PCA
+obj <- clustKekerasan(data)
+plotHeatmap(obj)
+plotPCA(obj)
+```
+
+```{r}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(lwgeom)
+
+# 1. LOAD SHAPEFILE
+sumsel <- st_read("C:/Users/muham/Downloads/RBI_50K_2023_Sumatera Selatan.shp")
+
+# 2. FIX GEOMETRY (WAJIB)
+sumsel <- st_make_valid(sumsel)
+
+# 3. STANDARISASI NAMA
+sumsel$Cakupan <- sumsel$WADMKK %>%
+  toupper() %>%
+  str_replace("KABUPATEN ", "") %>%
+  str_replace("KOTA ", "") %>%
+  str_trim()
+
+# 4. DATA CLUSTER
+data_cluster <- obj$data %>%
+  mutate(
+    Cakupan = toupper(Cakupan) %>%
+      str_replace("KABUPATEN ", "") %>%
+      str_replace("KOTA ", "") %>%
+      str_trim()
+  )
+
+# 5. MERGE
+sumsel_cluster <- sumsel %>%
+  left_join(data_cluster, by = "Cakupan")
+
+# 6. CENTROID
+sumsel_cluster$centroid <- st_centroid(sumsel_cluster$geometry)
+sumsel_cluster$label <- sumsel_cluster$Cakupan
+
+# 7. PETA
+ggplot(sumsel_cluster) +
+  geom_sf(aes(fill = Cluster_Label), color = "white", size = 0.3) +
+  geom_sf_text(aes(label = label, geometry = centroid),
+               size = 2, color = "black", check_overlap = FALSE) +
+  scale_fill_manual(
+    values = c("Kasus Rendah" = "#9FE2BF",
+               "Kasus Sedang" = "#FFD580",
+               "Kasus Tinggi" = "#FF6961")
+  ) +
+  labs(
+    title = "Peta Klaster Kekerasan Terhadap Anak di Sumatera Selatan",
+    fill = "Kategori Kasus"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+# ======================================================
+# PERHITUNGAN PEMBAGIAN CLUSTER RENDAH - SEDANG - TINGGI
+# ======================================================
+
+# Data numerik untuk perhitungan cluster
+num_data <- data %>%
+  select(Fisik, Psikis, Seksual, Eksploitasi, TPPO, Penelantaran, Lainnya)
+
+# Jalankan ulang kmeans
+set.seed(123)
+km <- kmeans(num_data, centers = 3)
+
+# Tambahkan cluster ke data
+data$Cluster <- km$cluster
+
+# Hitung rata-rata setiap variabel per cluster
+cluster_mean <- aggregate(num_data, list(Cluster = km$cluster), mean)
+
+# Hitung total nilai tiap cluster
+cluster_mean$Total_Skor <- rowSums(cluster_mean[ ,2:8])
+
+# Ranking cluster berdasarkan total skor
+ranking <- order(cluster_mean$Total_Skor)
+
+# Tambahkan label kategori
+cluster_mean$Kategori <- NA
+cluster_mean$Kategori[ranking[1]] <- "Kasus Rendah"
+cluster_mean$Kategori[ranking[2]] <- "Kasus Sedang"
+cluster_mean$Kategori[ranking[3]] <- "Kasus Tinggi"
+
+# Tampilkan hasil perhitungan
+cluster_mean
+
+```
+
+```{r}
+# ======================================================
+# PENJELASAN DETAIL PENENTUAN CLUSTER
+# ======================================================
+
+# Ambil matrix data dari objek cluster S3
+data_matrix <- obj$data_matrix
+
+# Ambil hasil kmeans dari objek
+km <- obj$km
+
+# Ambil centroid
+centroids <- km$centers
+
+# Fungsi jarak Euclidean
+euclid <- function(x, y) sqrt(sum((x - y)^2))
+
+# Buat tabel penjelasan lengkap
+penjelasan <- data_matrix %>% 
+  as.data.frame() %>% 
+  mutate(
+    Kabupaten = rownames(data_matrix),
+    Cluster_Terpilih = km$cluster,
+
+    # Hitung jarak ke masing-masing centroid
+    Jarak_ke_C1 = apply(data_matrix, 1, function(r) euclid(r, centroids[1,])),
+    Jarak_ke_C2 = apply(data_matrix, 1, function(r) euclid(r, centroids[2,])),
+    Jarak_ke_C3 = apply(data_matrix, 1, function(r) euclid(r, centroids[3,])),
+
+    # Penjelasan kenapa memilih cluster tertentu
+    Alasan = case_when(
+      Cluster_Terpilih == 1 ~ "Masuk Cluster 1 karena jarak ke centroid 1 paling kecil",
+      Cluster_Terpilih == 2 ~ "Masuk Cluster 2 karena jarak ke centroid 2 paling kecil",
+      Cluster_Terpilih == 3 ~ "Masuk Cluster 3 karena jarak ke centroid 3 paling kecil"
+    )
+  ) %>% 
+  select(Kabupaten, Cluster_Terpilih,
+         Jarak_ke_C1, Jarak_ke_C2, Jarak_ke_C3,
+         Alasan)
+
+# Print hasil
+penjelasan
+
+```
